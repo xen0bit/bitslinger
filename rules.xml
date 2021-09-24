@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rules>
+    <rule type="modify">
+        <name>Rand Fuzzer</name>
+        <pattern><![CDATA[72616e6466757a7a6572]]></pattern>
+        <interpreter>rand.go</interpreter>
+    </rule>
+    <rule type="modify">
+        <name>Hello2World</name>
+        <pattern><![CDATA[68656c6c6f]]></pattern>
+        <interpreter>hello2world.go</interpreter>
+    </rule>
+    <rule type="modify">
+        <name>SortBytes</name>
+        <pattern><![CDATA[6c6b6a686766647361]]></pattern>
+        <interpreter>sortbytes.go</interpreter>
+    </rule>
+    <rule type="modify">
+        <name>Go2No</name>
+        <pattern><![CDATA[676f]]></pattern>
+        <interpreter>go2no.go</interpreter>
+    </rule>
+</rules>
