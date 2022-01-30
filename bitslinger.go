@@ -1,211 +1,70 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
-	"encoding/xml"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"syscall"
-	"time"
+	"strings"
+	"sync"
 
-	"github.com/chifflier/nfqueue-go/nfqueue"
-
-	"github.com/traefik/yaegi/interp"
-	"github.com/traefik/yaegi/stdlib"
-
+	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-
-	ui "github.com/gizak/termui/v3"
-	"github.com/gizak/termui/v3/widgets"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
-type Rules struct {
-	XMLName xml.Name `xml:"rules"`
-	Rules   []Rule   `xml:"rule"`
+type GoPacketQueue struct {
+	sync.Mutex
+	packets map[string]*netfilter.NFPacket
 }
 
-type Rule struct {
-	XMLName     xml.Name `xml:"rule"`
-	Type        string   `xml:"type,attr"`
-	Name        string   `xml:"name"`
-	Pattern     string   `xml:"pattern"`
-	Interpreter string   `xml:"interpreter"`
+var server string
+var wsMode bool
+var proxyUri string
+var proxyUrl *url.URL
+var wsConn *websocket.Conn
+var httpClient *http.Client
+
+var upgrader = websocket.Upgrader{} // use default options
+
+//var tcpClient net.Conn
+var gpq GoPacketQueue
+
+func testEq(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
-var ruleNames []string
-var regexpPatterns []*regexp.Regexp
-var packetInterpreters []func([]byte) []byte
+func releaseFromNfqueue(packetUuid string, packetPayload []byte) {
+	gpq.Lock()
+	defer gpq.Unlock()
+	//Look up nfqueue pointer
+	if p, ok := gpq.packets[packetUuid]; ok {
+		//Decode packet from nfqueue
+		packet := gopacket.NewPacket(p.Packet.Data(), layers.LayerTypeIPv4, gopacket.Default)
+		//Check that packet has a app payload and has been modifed
+		if app := packet.ApplicationLayer(); app != nil && !testEq(packetPayload, app.Payload()) {
+			//Set flags for TCP vs UDP
+			isTCP := packet.Layer(layers.LayerTypeTCP)
+			isUDP := packet.Layer(layers.LayerTypeUDP)
 
-var origHexDump *widgets.Paragraph
-var ruleIndicator *widgets.List
-var modHexDump *widgets.Paragraph
-
-var logString string
-var originalHexPayload string
-var modifiedHexPayload string
-
-func loadGoRules(goRuleDir string) {
-	var files []string
-
-	root := goRuleDir
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
-			return nil
-		}
-		if filepath.Ext(path) != ".go" {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
-	if err != nil {
-		panic(err)
-	}
-	sort.Strings(files)
-	for _, file := range files {
-		fmt.Println(file)
-		b, err := ioutil.ReadFile(file) // just pass the file name
-		if err != nil {
-			fmt.Print(err)
-		}
-		str := string(b)
-		//Compile golang interpreters
-		ruleInterpreter := interp.New(interp.Options{})
-		ruleInterpreter.Use(stdlib.Symbols)
-		//Validate it compiles
-		_, err = ruleInterpreter.Eval(str)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
-		}
-		//Validate export compiles
-		v, err := ruleInterpreter.Eval("mod.Packet")
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
-		}
-		//Store pointer to interpreter
-		modifyPacket := v.Interface().(func([]byte) []byte)
-		packetInterpreters = append(packetInterpreters, modifyPacket)
-	}
-}
-
-func loadRules() {
-	var tempRuleNames []string
-	var tempRegexpPatterns []*regexp.Regexp
-	var tempPacketInterpreters []func([]byte) []byte
-
-	// Open our xmlFile
-	xmlFile, err := os.Open("rules.xml")
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	//fmt.Println("Successfully Opened rules.xml")
-	// defer the closing of our xmlFile so that we can parse it later on
-	defer xmlFile.Close()
-	// read our opened xmlFile as a byte array.
-	byteValue, err := ioutil.ReadAll(xmlFile)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(0)
-	}
-
-	// we initialize our Users array
-	var rules Rules
-	// we unmarshal our byteArray which contains our
-	// xmlFiles content into 'users' which we defined above
-	err = xml.Unmarshal(byteValue, &rules)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(0)
-	}
-
-	// we iterate through every user within our users array and
-	// print out the user Type, their name, and their facebook url
-	// as just an example
-
-	for i := 0; i < len(rules.Rules); i++ {
-		fmt.Println("Rule: " + strconv.Itoa(i))
-		fmt.Println("Type: " + rules.Rules[i].Type)
-		fmt.Println("Name: " + rules.Rules[i].Name)
-		fmt.Println("Pattern: " + rules.Rules[i].Pattern)
-		fmt.Println("Interpreter: " + rules.Rules[i].Interpreter)
-
-		//Keep rule names
-		ruleNames = append(ruleNames, "["+strconv.Itoa(i)+"] "+rules.Rules[i].Name)
-
-		//Compile regex patterns
-		r, err := regexp.Compile(rules.Rules[i].Pattern)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
-		}
-		tempRegexpPatterns = append(tempRegexpPatterns, r)
-		//Compile golang interpreters
-		ruleInterpreter := interp.New(interp.Options{})
-		ruleInterpreter.Use(stdlib.Symbols)
-		//Read contents of go rule
-		b, err := ioutil.ReadFile("gorules/" + rules.Rules[i].Interpreter) // just pass the file name
-		if err != nil {
-			fmt.Print(err)
-		}
-		interpreterString := string(b)
-		//Validate it compiles
-		_, err = ruleInterpreter.Eval(interpreterString)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
-		}
-		//Validate export compiles
-		v, err := ruleInterpreter.Eval("mod.Packet")
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(0)
-		}
-		//Store pointer to interpreter
-		modifyPacket := v.Interface().(func([]byte) []byte)
-		tempPacketInterpreters = append(tempPacketInterpreters, modifyPacket)
-
-	}
-	fmt.Println("Loaded All Rules Successfully!")
-	ruleNames = tempRuleNames
-	regexpPatterns = tempRegexpPatterns
-	packetInterpreters = tempPacketInterpreters
-}
-
-func matchHexPacket(hexPacket string) (bool, int) {
-	for i, r := range regexpPatterns {
-		doesMatch := r.MatchString(hexPacket)
-		if doesMatch {
-			return true, i
-		}
-	}
-	return false, 0
-}
-
-func realCallback(payload *nfqueue.Payload) int {
-	// Decode a packet
-	packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
-	if app := packet.ApplicationLayer(); app != nil {
-		hexString := fmt.Sprintf("%x", app.Payload())
-		matched, ruleId := matchHexPacket(hexString)
-		originalHexPayload = hex.Dump(app.Payload())
-		//Set flags for TCP vs UDP
-		isTCP := packet.Layer(layers.LayerTypeTCP)
-		isUDP := packet.Layer(layers.LayerTypeUDP)
-		if matched {
-			ruleIndicator.SelectedRow = ruleId
-			out := packetInterpreters[ruleId](app.Payload())
+			//Configure Checksums
 			if isTCP != nil {
 				packet.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(packet.NetworkLayer())
 			}
@@ -213,6 +72,7 @@ func realCallback(payload *nfqueue.Payload) int {
 				packet.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(packet.NetworkLayer())
 			}
 
+			//Rebuild with new payload
 			buffer := gopacket.NewSerializeBuffer()
 			options := gopacket.SerializeOptions{
 				ComputeChecksums: true,
@@ -222,155 +82,225 @@ func realCallback(payload *nfqueue.Payload) int {
 				gopacket.SerializeLayers(buffer, options,
 					packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
 					packet.Layer(layers.LayerTypeTCP).(*layers.TCP),
-					gopacket.Payload(out),
+					gopacket.Payload(packetPayload),
 				)
 			}
 			if isUDP != nil {
 				gopacket.SerializeLayers(buffer, options,
 					packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
 					packet.Layer(layers.LayerTypeUDP).(*layers.UDP),
-					gopacket.Payload(out),
+					gopacket.Payload(packetPayload),
 				)
 			}
-			packetBytes := buffer.Bytes()
-			//fmt.Printf("Modified  id: %d\n", payload.Id)
 
-			modifiedHexPayload = hex.Dump(out)
-			payload.SetVerdictModified(nfqueue.NF_ACCEPT, packetBytes)
-			return 0
+			packetBytes := buffer.Bytes()
+			//Lock Mutex
+			//gpq.Lock()
+			p.SetVerdictWithPacket(netfilter.NF_ACCEPT, packetBytes)
+			//Remove UUID from map
+			delete(gpq.packets, packetUuid)
+			//gpq.Unlock()
 		} else {
-			modifiedHexPayload = ""
-			payload.SetVerdict(nfqueue.NF_ACCEPT)
-			return 0
+			//Packet did not have application layer, default accept
+			//Lock Mutex
+			//gpq.Lock()
+			p.SetVerdict(netfilter.NF_ACCEPT)
+			//Remove UUID from map
+			delete(gpq.packets, packetUuid)
+			//gpq.Unlock()
 		}
 	} else {
-		//fmt.Println("-- ")
-		payload.SetVerdict(nfqueue.NF_ACCEPT)
-		return 0
+		//Log, no need to call mutex, nothing to remove
+		log.Println("Packet UUID Not found:", packetUuid)
 	}
+	//gpq.Unlock()
 }
 
-func route2nf() {
-	//Set iptables rule to route packets from sourc eport 9999 to queue number 0
-	cmd := exec.Command("iptables", "-t", "raw", "-A", "PREROUTING", "-p", "udp", "--source-port", "9999", "-j", "NFQUEUE", "--queue-num", "0")
-	stdout, err := cmd.Output()
+func receivePayloadHTTP(w http.ResponseWriter, req *http.Request) {
+	//Retrieve Packet UUID from request
+	packetUuid := req.Header.Get("Packet-Uuid")
+	//Retrieve hex from request body and cast as bytes
+	body, _ := ioutil.ReadAll(req.Body)
+	packetPayload, _ := hex.DecodeString(string(body))
+	releaseFromNfqueue(packetUuid, packetPayload)
+	w.WriteHeader(200)
+}
 
+func receivePayloadWS(w http.ResponseWriter, r *http.Request) {
+	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Print("upgrade:", err)
 		return
-	} else {
-		fmt.Println(string(stdout))
 	}
-
-	cmd = exec.Command("clear")
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-}
-
-func unroute2nf() {
-	//Remove iptables rules that route packets into nfqueue
-	unroute := exec.Command("iptables", "-F", "-t", "raw")
-	stdoutUnroute, err := unroute.Output()
-
-	if err != nil {
-		fmt.Println(err.Error())
-		return
-	} else {
-		fmt.Println(string(stdoutUnroute))
+	log.SetOutput(os.Stdout)
+	log.Println("WS Client Connected")
+	log.SetOutput(ioutil.Discard)
+	wsConn = c
+	defer c.Close()
+	for {
+		//wsConn.SetReadDeadline(time.Now().Add(time.Second * 1))
+		_, message, err := c.ReadMessage()
+		if err != nil {
+			log.SetOutput(os.Stdout)
+			log.Println("read:", err)
+			log.SetOutput(ioutil.Discard)
+			break
+		} else {
+			messageString := string(message)
+			//log.Println(messageString)
+			//Segment Message
+			if segments := strings.Split(messageString, "\n"); len(segments) >= 2 {
+				//log.Println(segments)
+				packetUuid := segments[0]
+				payloadHex := segments[1]
+				packetPayload, _ := hex.DecodeString(payloadHex)
+				releaseFromNfqueue(packetUuid, packetPayload)
+			} else {
+				log.Println("WARNING: WS Received unexpected message format.")
+				log.Println(messageString)
+			}
+		}
 	}
 }
 
-func setupUI() {
-	//Original Packet Payload
-	origHexDump = widgets.NewParagraph()
-	origHexDump.Title = "Original Payload"
-	origHexDump.Text = ""
-	origHexDump.SetRect(0, 0, 80, 32)
-	origHexDump.TextStyle.Fg = ui.ColorGreen
-	origHexDump.BorderStyle.Fg = ui.ColorCyan
-
-	//Modified Packet Payload
-	modHexDump = widgets.NewParagraph()
-	modHexDump.Title = "Modified Payload"
-	modHexDump.Text = ""
-	//Min Width 130
-	modHexDump.SetRect(105, 0, 185, 32)
-	modHexDump.TextStyle.Fg = ui.ColorRed
-	modHexDump.BorderStyle.Fg = ui.ColorCyan
-
-	//Create list widget for rules
-	ruleIndicator = widgets.NewList()
-	ruleIndicator.Title = "Rules"
-	ruleIndicator.Rows = ruleNames
-	ruleIndicator.SetRect(80, 0, 105, 32)
-	ruleIndicator.WrapText = false
-	ruleIndicator.TextStyle.Fg = ui.ColorYellow
-	ruleIndicator.SelectedRowStyle.Bg = ui.ColorWhite
-	ruleIndicator.SelectedRowStyle.Fg = ui.ColorBlue
+func sendToProxy(p *netfilter.NFPacket) int {
+	// gpq.Lock()
+	// defer gpq.Unlock()
+	// Decode a packet
+	//packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
+	if applayer := p.Packet.ApplicationLayer(); applayer != nil {
+		//Mutex on Queue
+		gpq.Lock()
+		//Generate UUID to Identify packet
+		packetUuid := uuid.New().String()
+		//Insert marker into GoPacketQueue
+		gpq.packets[packetUuid] = p
+		gpq.Unlock()
+		//fmt.Println(gpq.packets)
+		log.Printf("Packet UUID %s\n", packetUuid)
+		if wsMode {
+			hexEncodedPayload := []byte(packetUuid + "\n" + hex.EncodeToString(applayer.Payload()) + "\n")
+			if wsConn != nil {
+				err := wsConn.WriteMessage(websocket.TextMessage, hexEncodedPayload)
+				if err != nil {
+					log.Println(err)
+					log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
+					p.SetVerdict(netfilter.NF_ACCEPT)
+					//Lock Mutex
+					gpq.Lock()
+					//Remove UUID from map
+					delete(gpq.packets, packetUuid)
+					gpq.Unlock()
+				}
+			} else {
+				log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
+				p.SetVerdict(netfilter.NF_ACCEPT)
+				//Lock Mutex
+				gpq.Lock()
+				//Remove UUID from map
+				delete(gpq.packets, packetUuid)
+				gpq.Unlock()
+			}
+		} else {
+			//HTTP Mode
+			hexEncodedPayload := []byte(hex.EncodeToString(applayer.Payload()))
+			payloadReader := bytes.NewReader(hexEncodedPayload)
+			req, err := http.NewRequest("POST", "http://"+server+"/bitslinger", payloadReader)
+			if err != nil {
+				log.Fatal(err)
+			}
+			req.Header.Add("Packet-Uuid", packetUuid)
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				log.Println(err)
+				log.Println("WARNING: HTTP Proxy communication failed, Default forwarding packet as-is")
+				p.SetVerdict(netfilter.NF_ACCEPT)
+				//Lock Mutex
+				gpq.Lock()
+				//Remove UUID from map
+				delete(gpq.packets, packetUuid)
+				gpq.Unlock()
+			} else {
+				resp.Body.Close()
+			}
+		}
+	} else {
+		p.SetVerdict(netfilter.NF_ACCEPT)
+	}
+	//Needed for C API
+	return 0
 }
 
-func updateUI() {
-	origHexDump.Text = originalHexPayload
-	modHexDump.Text = modifiedHexPayload
-	ui.Render(origHexDump, ruleIndicator, modHexDump)
+func newGoPacketQueue() *GoPacketQueue {
+	t := GoPacketQueue{
+		packets: make(map[string]*netfilter.NFPacket),
+	}
+	return &t
 }
 
 func main() {
-	//Load our XML Rules
-	loadRules()
-	//UI init
-	if err := ui.Init(); err != nil {
-		log.Fatalf("failed to initialize termui: %v", err)
-	}
-	defer ui.Close()
+	fmt.Println("BitSlinger: The TCP/UDP Packet Payload Editing Tool")
+	// using standard library "flag" package
+	flag.String("server", "127.0.0.1:9393", "host:port pair for bitslinger (http:// or ws://) listener")
+	flag.String("proxy", "127.0.0.1:8080", "host:port pair for HTTP Proxy based modifications.")
+	flag.Bool("ws", false, `Configures the packet encapsulation to use websockets`)
+	flag.Int("qnum", 0, "NFQueue queue number to attach to.")
+	flag.Bool("verbose", false, "Verbose logging. May slow down operation, but useful for debugging.")
 
-	log.SetOutput(ioutil.Discard)
-	//Create go nfqueue
-	q := new(nfqueue.Queue)
-	//Set callback for queue
-	q.SetCallback(realCallback)
-	//Initialize queue
-	q.Init()
-	//Generic reset for bind
-	q.Unbind(syscall.AF_INET)
-	q.Bind(syscall.AF_INET)
-	//Create nfqueue "0"
-	q.CreateQueue(0)
+	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+	pflag.Parse()
+	viper.BindPFlags(pflag.CommandLine)
 
-	route2nf()
+	server = viper.GetString("server")
+	proxyUri = viper.GetString("proxy")
+	wsMode = viper.GetBool("ws")
+	verbose := viper.GetBool("verbose")
+	qnum := viper.GetInt("qnum")
 
-	setupUI()
+	//Configure Send/Recievers
+	if wsMode {
+		http.HandleFunc("/bitslinger", receivePayloadWS)
 
-	ui.Render(origHexDump, ruleIndicator, modHexDump)
-	uiEvents := ui.PollEvents()
-	ticker := time.NewTicker(time.Millisecond * 500).C
+		log.Printf("Starting WS listener on: %s\n", "ws://"+server+"/bitslinger")
+		go func() {
+			http.ListenAndServe(server, nil)
+		}()
 
-	go func() {
-		for {
-			select {
-			case e := <-uiEvents:
-				switch e.ID {
-				//Quit
-				case "q", "<C-c>":
-					q.StopLoop()
-					unroute2nf()
-					return
-				//Reload
-				case "r":
-					//q.StopLoop()
-					unroute2nf()
-					loadRules()
-					route2nf()
-					ui.Render(origHexDump, ruleIndicator, modHexDump)
-				}
-			case <-ticker:
-				updateUI()
-			}
+	} else {
+		//HTTP Listener
+		http.HandleFunc("/bitslinger", receivePayloadHTTP)
+
+		log.Printf("Starting HTTP listener on: %s\n", "http://"+server+"/bitslinger")
+		go func() {
+			http.ListenAndServe(server, nil)
+		}()
+
+		//HTTP Sender
+		proxy, err := url.Parse("http://" + proxyUri)
+		if err != nil {
+			panic(err)
 		}
-	}()
-	// XXX Drop privileges here
+		proxyUrl = proxy
+		httpClient = &http.Client{
+			Timeout:   0,
+			Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)},
+		}
+	}
 
-	q.Loop()
-	q.DestroyQueue()
-	q.Close()
+	gpq = *newGoPacketQueue()
+
+	nfq, err := netfilter.NewNFQueue(uint16(qnum), 1000, netfilter.NF_DEFAULT_PACKET_SIZE)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nfq.Close()
+	if !verbose {
+		log.SetOutput(ioutil.Discard)
+		os.Stderr = nil
+	}
+	packets := nfq.GetPackets()
+
+	for p := range packets {
+		sendToProxy(&p)
+	}
 }
