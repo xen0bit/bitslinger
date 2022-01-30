@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -42,6 +43,7 @@ var upgrader = websocket.Upgrader{} // use default options
 var gpq *manager.PacketQueue
 
 func init() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
 	parseUserOpts()
 	gpq = manager.NewPacketQueue()
 }
