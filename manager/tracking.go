@@ -56,9 +56,19 @@ func (tracker *PacketTracker) StartTracking(p *netfilter.NFPacket) (pckt *Tracke
 	return
 }
 
-func (tracker *PacketTracker) StopTracking(packetUUID) {
+// AcceptAndRelease sets the netfilter verdict to NF_ACCEPT before Releasing the packet referenced by given packetUUID.
+func (tracker *PacketTracker) AcceptAndRelease(packetUUID string) {
+	pckt, _ := tracker.FromUUID(packetUUID)
+	pckt.SetVerdict(netfilter.NF_ACCEPT)
+	tracker.Release(packetUUID)
+}
+
+// Release stops tracking a packet referenced by the given packetUUID.
+func (tracker *PacketTracker) Release(packetUUID string) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
 	// Remove UUID from map
-	delete(gpq.packets, packetUUID)
+	delete(tracker.packets, packetUUID)
 }
 
 type nfVerdict C.uint
@@ -68,7 +78,7 @@ type Packet interface {
 	UUID() string
 	AppLayer() gopacket.ApplicationLayer
 	Data() []byte
-	
+
 	SetVerdict(nfVerdict)
 	SetRequeueVerdict(uint16)
 	SetVerdictWithPacket(v nfVerdict, packet []byte)
@@ -84,14 +94,12 @@ type TrackedPacket struct {
 	mu   *sync.RWMutex
 }
 
-
 // Data is a concurrent safe way to return the byte slice of of the underlying netfilter.Packet data.
 func (tp TrackedPacket) Data() []byte {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 	return tp.p.Packet.Data()
 }
-
 
 // SetVerdict is a concurrent safe wrapper around netfilter.Packet.SetVerdict.
 func (tp TrackedPacket) SetVerdict(verdict nfVerdict) {
