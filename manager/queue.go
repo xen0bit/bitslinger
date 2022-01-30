@@ -71,7 +71,7 @@ func (pq *PacketQueue) Release(packetUUID string) {
 	delete(pq.packets, packetUUID)
 }
 
-type nfVerdict C.uint
+type nfVerdict netfilter.Verdict
 
 // Packet represents a type that contains the necessary information we need to track a packet from libnetfilter_queue.
 type Packet interface {
@@ -79,9 +79,9 @@ type Packet interface {
 	AppLayer() gopacket.ApplicationLayer
 	Data() []byte
 
-	SetVerdict(nfVerdict)
+	SetVerdict(interface{})
 	SetRequeueVerdict(uint16)
-	SetVerdictWithPacket(v nfVerdict, packet []byte)
+	SetVerdictWithPacket(v interface{}, packet []byte)
 
 	Valid() bool
 }
@@ -102,10 +102,10 @@ func (tp KnownPacket) Data() []byte {
 }
 
 // SetVerdict is a concurrent safe wrapper around netfilter.Packet.SetVerdict.
-func (tp KnownPacket) SetVerdict(verdict nfVerdict) {
+func (tp KnownPacket) SetVerdict(verdict interface{}) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	tp.p.SetVerdict(verdict)
+	tp.p.SetVerdict(verdict.(netfilter.Verdict))
 }
 
 // SetRequeueVerdict is a concurrent safe wrapper around netfilter.Packet.SetRequeueVerdict.
@@ -116,10 +116,10 @@ func (tp KnownPacket) SetRequeueVerdict(u uint16) {
 }
 
 // SetVerdictWithPacket is a concurrent safe wrapper around netfilter.Packet.SetVerdictWithPacket.
-func (tp KnownPacket) SetVerdictWithPacket(v nfVerdict, packet []byte) {
+func (tp KnownPacket) SetVerdictWithPacket(v interface{}, packet []byte) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	tp.p.SetVerdictWithPacket(v, packet)
+	tp.p.SetVerdictWithPacket(v.(netfilter.Verdict), packet)
 }
 
 // UUID returns the unique identifier that bitslinger uses to reference KnownPacket instances.
