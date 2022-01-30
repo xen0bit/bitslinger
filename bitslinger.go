@@ -39,11 +39,11 @@ var (
 var upgrader = websocket.Upgrader{} // use default options
 
 // var tcpClient net.Conn
-var gpq *manager.PacketTracker
+var gpq *manager.PacketQueue
 
 func init() {
 	parseUserOpts()
-	gpq = manager.NewPacketTracker()
+	gpq = manager.NewPacketQueue()
 }
 
 func parseUserOpts() {
@@ -295,7 +295,7 @@ func sendToProxy(p *netfilter.NFPacket) int {
 	// Decode a packet
 	// packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
 
-	pckt := gpq.StartTracking(p)
+	pckt := gpq.AddPacket(p)
 	if !pckt.Valid() {
 		return 0
 	}
