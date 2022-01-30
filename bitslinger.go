@@ -6,12 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
@@ -20,106 +21,93 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-)
 
-type GoPacketQueue struct {
-	sync.Mutex
-	packets map[string]*netfilter.NFPacket
-}
+	"github.com/xen0bit/bitslinger/manager"
+)
 
 var server string
 var wsMode bool
-var proxyUri string
-var proxyUrl *url.URL
+var proxyURI string
+var proxyURL *url.URL
 var wsConn *websocket.Conn
 var httpClient *http.Client
 
 var upgrader = websocket.Upgrader{} // use default options
 
-//var tcpClient net.Conn
-var gpq GoPacketQueue
+// var tcpClient net.Conn
+var gpq *manager.PacketTracker
 
-func testEq(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+func init() {
+	gpq = manager.NewPacketTracker()
 }
 
-func releaseFromNfqueue(packetUuid string, packetPayload []byte) {
-	gpq.Lock()
-	defer gpq.Unlock()
-	//Look up nfqueue pointer
-	if p, ok := gpq.packets[packetUuid]; ok {
-		//Decode packet from nfqueue
-		packet := gopacket.NewPacket(p.Packet.Data(), layers.LayerTypeIPv4, gopacket.Default)
-		//Check that packet has a app payload and has been modifed
-		if app := packet.ApplicationLayer(); app != nil && !testEq(packetPayload, app.Payload()) {
-			//Set flags for TCP vs UDP
-			isTCP := packet.Layer(layers.LayerTypeTCP)
-			isUDP := packet.Layer(layers.LayerTypeUDP)
-
-			//Configure Checksums
-			if isTCP != nil {
-				packet.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(packet.NetworkLayer())
-			}
-			if isUDP != nil {
-				packet.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(packet.NetworkLayer())
-			}
-
-			//Rebuild with new payload
-			buffer := gopacket.NewSerializeBuffer()
-			options := gopacket.SerializeOptions{
-				ComputeChecksums: true,
-				FixLengths:       true,
-			}
-			if isTCP != nil {
-				gopacket.SerializeLayers(buffer, options,
-					packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-					packet.Layer(layers.LayerTypeTCP).(*layers.TCP),
-					gopacket.Payload(packetPayload),
-				)
-			}
-			if isUDP != nil {
-				gopacket.SerializeLayers(buffer, options,
-					packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-					packet.Layer(layers.LayerTypeUDP).(*layers.UDP),
-					gopacket.Payload(packetPayload),
-				)
-			}
-
-			packetBytes := buffer.Bytes()
-			//Lock Mutex
-			//gpq.Lock()
-			p.SetVerdictWithPacket(netfilter.NF_ACCEPT, packetBytes)
-			//Remove UUID from map
-			delete(gpq.packets, packetUuid)
-			//gpq.Unlock()
-		} else {
-			//Packet did not have application layer, default accept
-			//Lock Mutex
-			//gpq.Lock()
-			p.SetVerdict(netfilter.NF_ACCEPT)
-			//Remove UUID from map
-			delete(gpq.packets, packetUuid)
-			//gpq.Unlock()
-		}
-	} else {
-		//Log, no need to call mutex, nothing to remove
-		log.Println("Packet UUID Not found:", packetUuid)
+func releaseFromNfqueue(packetUUID string, packetPayload []byte) {
+	// Look up nfqueue pointer
+	p, ok := gpq.FromUUID(packetUUID)
+	if !ok {
+		log.Debug().Str("caller", packetUUID).Msg("Packet UUID Not found")
+		return
 	}
-	//gpq.Unlock()
+
+	// Decode packet from nfqueue
+	packet := gopacket.NewPacket(p.Data(), layers.LayerTypeIPv4, gopacket.Default)
+	// Check that packet has a app payload and has been modifed
+	if app := packet.ApplicationLayer(); app != nil && !testEq(packetPayload, app.Payload()) {
+		// Set flags for TCP vs UDP
+		isTCP := packet.Layer(layers.LayerTypeTCP)
+		isUDP := packet.Layer(layers.LayerTypeUDP)
+
+		// Configure Checksums
+		if isTCP != nil {
+			packet.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(packet.NetworkLayer())
+		}
+		if isUDP != nil {
+			packet.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(packet.NetworkLayer())
+		}
+
+		// Rebuild with new payload
+		buffer := gopacket.NewSerializeBuffer()
+		options := gopacket.SerializeOptions{
+			ComputeChecksums: true,
+			FixLengths:       true,
+		}
+		if isTCP != nil {
+			gopacket.SerializeLayers(buffer, options,
+				packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+				packet.Layer(layers.LayerTypeTCP).(*layers.TCP),
+				gopacket.Payload(packetPayload),
+			)
+		}
+		if isUDP != nil {
+			gopacket.SerializeLayers(buffer, options,
+				packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+				packet.Layer(layers.LayerTypeUDP).(*layers.UDP),
+				gopacket.Payload(packetPayload),
+			)
+		}
+
+		packetBytes := buffer.Bytes()
+		// Lock Mutex
+		// gpq.Lock()
+		p.SetVerdictWithPacket(netfilter.NF_ACCEPT, packetBytes)
+
+	} else {
+		// Packet did not have application layer, default accept
+		// Lock Mutex
+		// gpq.Lock()
+		p.Self().SetVerdict(netfilter.NF_ACCEPT)
+		// Remove UUID from map
+		delete(gpq.packets, packetUUID)
+		// gpq.Unlock()
+	}
+
+	// gpq.Unlock()
 }
 
 func receivePayloadHTTP(w http.ResponseWriter, req *http.Request) {
-	//Retrieve Packet UUID from request
+	// Retrieve Packet UUID from request
 	packetUuid := req.Header.Get("Packet-Uuid")
-	//Retrieve hex from request body and cast as bytes
+	// Retrieve hex from request body and cast as bytes
 	body, _ := ioutil.ReadAll(req.Body)
 	packetPayload, _ := hex.DecodeString(string(body))
 	releaseFromNfqueue(packetUuid, packetPayload)
@@ -127,115 +115,120 @@ func receivePayloadHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func receivePayloadWS(w http.ResponseWriter, r *http.Request) {
+	slog := log.With().Str("caller", r.RemoteAddr).Logger()
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Print("upgrade:", err)
+		slog.Warn().Err(err).Msg("Failed to upgrade websocket conn")
 		return
 	}
-	log.SetOutput(os.Stdout)
-	log.Println("WS Client Connected")
-	log.SetOutput(ioutil.Discard)
+	slog.Info().Str("caller", r.RemoteAddr).Msg("WS Client Connected")
+	// log.SetOutput(ioutil.Discard)
 	wsConn = c
-	defer c.Close()
+
+	defer func(c *websocket.Conn) {
+		err := c.Close()
+		if err != nil {
+			slog.Trace().Err(err).Msg("Failed to properly close websocket handler")
+		}
+	}(c)
+
 	for {
-		//wsConn.SetReadDeadline(time.Now().Add(time.Second * 1))
+		// wsConn.SetReadDeadline(time.Now().Add(time.Second * 1))
 		_, message, err := c.ReadMessage()
 		if err != nil {
-			log.SetOutput(os.Stdout)
-			log.Println("read:", err)
-			log.SetOutput(ioutil.Discard)
+			slog.Warn().Err(err).Msg("read error")
 			break
-		} else {
-			messageString := string(message)
-			//log.Println(messageString)
-			//Segment Message
-			if segments := strings.Split(messageString, "\n"); len(segments) >= 2 {
-				//log.Println(segments)
-				packetUuid := segments[0]
-				payloadHex := segments[1]
-				packetPayload, _ := hex.DecodeString(payloadHex)
-				releaseFromNfqueue(packetUuid, packetPayload)
-			} else {
-				log.Println("WARNING: WS Received unexpected message format.")
-				log.Println(messageString)
-			}
 		}
+		// log.Println(messageString)
+		// Segment Message
+		segments := strings.Split(string(message), "\n")
+		if len(segments) < 2 {
+			log.Warn().Str("message", string(message)).Msg("unexpected message format")
+			continue
+		}
+
+		slog.Trace().Strs("segments", segments).Msg("websocket message")
+		packetUUID := segments[0]
+		payloadHex := segments[1]
+		packetPayload, err := hex.DecodeString(payloadHex)
+		if err != nil {
+			log.Error().Err(err).Interface("payload", payloadHex).Msg("Packet decode failure!")
+			continue
+		}
+		releaseFromNfqueue(packetUUID, packetPayload)
+
 	}
+}
+
+func wsModeHandler(packet Packet) {
+	hexEncodedPayload := []byte(packet.UUID() + "\n" + hex.EncodeToString(packet.AppLayer().Payload()) + "\n")
+	if wsConn != nil {
+		err := wsConn.WriteMessage(websocket.TextMessage, hexEncodedPayload)
+		if err != nil {
+			log.Println(err)
+			log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
+			p.SetVerdict(netfilter.NF_ACCEPT)
+			// Lock Mutex
+			gpq.Lock()
+			// Remove UUID from map
+			delete(gpq.packets, packetUUID)
+			gpq.Unlock()
+		}
+	} else {
+		log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
+		p.SetVerdict(netfilter.NF_ACCEPT)
+		// Lock Mutex
+		gpq.Lock()
+		// Remove UUID from map
+		delete(gpq.packets, packetUUID)
+		gpq.Unlock()
+	}
+
 }
 
 func sendToProxy(p *netfilter.NFPacket) int {
 	// gpq.Lock()
 	// defer gpq.Unlock()
 	// Decode a packet
-	//packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
-	if applayer := p.Packet.ApplicationLayer(); applayer != nil {
-		//Mutex on Queue
-		gpq.Lock()
-		//Generate UUID to Identify packet
-		packetUuid := uuid.New().String()
-		//Insert marker into GoPacketQueue
-		gpq.packets[packetUuid] = p
-		gpq.Unlock()
-		//fmt.Println(gpq.packets)
-		log.Printf("Packet UUID %s\n", packetUuid)
-		if wsMode {
-			hexEncodedPayload := []byte(packetUuid + "\n" + hex.EncodeToString(applayer.Payload()) + "\n")
-			if wsConn != nil {
-				err := wsConn.WriteMessage(websocket.TextMessage, hexEncodedPayload)
-				if err != nil {
-					log.Println(err)
-					log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
-					p.SetVerdict(netfilter.NF_ACCEPT)
-					//Lock Mutex
-					gpq.Lock()
-					//Remove UUID from map
-					delete(gpq.packets, packetUuid)
-					gpq.Unlock()
-				}
-			} else {
-				log.Println("WARNING: WebSocket proxy communication failed, Default forwarding packet as-is")
-				p.SetVerdict(netfilter.NF_ACCEPT)
-				//Lock Mutex
-				gpq.Lock()
-				//Remove UUID from map
-				delete(gpq.packets, packetUuid)
-				gpq.Unlock()
-			}
-		} else {
-			//HTTP Mode
-			hexEncodedPayload := []byte(hex.EncodeToString(applayer.Payload()))
-			payloadReader := bytes.NewReader(hexEncodedPayload)
-			req, err := http.NewRequest("POST", "http://"+server+"/bitslinger", payloadReader)
-			if err != nil {
-				log.Fatal(err)
-			}
-			req.Header.Add("Packet-Uuid", packetUuid)
-			resp, err := httpClient.Do(req)
-			if err != nil {
-				log.Println(err)
-				log.Println("WARNING: HTTP Proxy communication failed, Default forwarding packet as-is")
-				p.SetVerdict(netfilter.NF_ACCEPT)
-				//Lock Mutex
-				gpq.Lock()
-				//Remove UUID from map
-				delete(gpq.packets, packetUuid)
-				gpq.Unlock()
-			} else {
-				resp.Body.Close()
-			}
-		}
-	} else {
-		p.SetVerdict(netfilter.NF_ACCEPT)
-	}
-	//Needed for C API
-	return 0
-}
+	// packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
 
-func newGoPacketQueue() *GoPacketQueue {
-	t := GoPacketQueue{
-		packets: make(map[string]*netfilter.NFPacket),
+	packetUUID, ok := newTrackedPacket(p)
+	if !ok {
+		return 0
 	}
-	return &t
+
+	log.Trace().Interface("tracked", gpq.packets).Msg("[+]")
+
+	log.Trace().Str("caller", packetUUID).Msg("-> proxy")
+
+	switch {
+	case wsMode:
+		wsModeHandler(packetUUID)
+	default:
+		// HTTP Mode
+		hexEncodedPayload := []byte(hex.EncodeToString(applayer.Payload()))
+		payloadReader := bytes.NewReader(hexEncodedPayload)
+		req, err := http.NewRequest("POST", "http://"+server+"/bitslinger", payloadReader)
+		if err != nil {
+			log.Fatal(err)
+		}
+		req.Header.Add("Packet-Uuid", packetUUID)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			log.Println(err)
+			log.Println("WARNING: HTTP Proxy communication failed, Default forwarding packet as-is")
+			p.SetVerdict(netfilter.NF_ACCEPT)
+			// Lock Mutex
+			gpq.Lock()
+			// Remove UUID from map
+			delete(gpq.packets, packetUUID)
+			gpq.Unlock()
+		} else {
+			resp.Body.Close()
+		}
+	}
+	// Needed for C API
+	return 0
 }
 
 func main() {
@@ -257,7 +250,7 @@ func main() {
 	verbose := viper.GetBool("verbose")
 	qnum := viper.GetInt("qnum")
 
-	//Configure Send/Recievers
+	// Configure Send/Recievers
 	if wsMode {
 		http.HandleFunc("/bitslinger", receivePayloadWS)
 
@@ -267,7 +260,7 @@ func main() {
 		}()
 
 	} else {
-		//HTTP Listener
+		// HTTP Listener
 		http.HandleFunc("/bitslinger", receivePayloadHTTP)
 
 		log.Printf("Starting HTTP listener on: %s\n", "http://"+server+"/bitslinger")
@@ -275,19 +268,17 @@ func main() {
 			http.ListenAndServe(server, nil)
 		}()
 
-		//HTTP Sender
+		// HTTP Sender
 		proxy, err := url.Parse("http://" + proxyUri)
 		if err != nil {
 			panic(err)
 		}
-		proxyUrl = proxy
+		proxyURL = proxy
 		httpClient = &http.Client{
 			Timeout:   0,
-			Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)},
+			Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
 		}
 	}
-
-	gpq = *newGoPacketQueue()
 
 	nfq, err := netfilter.NewNFQueue(uint16(qnum), 1000, netfilter.NF_DEFAULT_PACKET_SIZE)
 	if err != nil {
