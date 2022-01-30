@@ -31,14 +31,14 @@ func (pq *PacketQueue) FromUUID(UUID string) (pckt Packet, ok bool) {
 	return
 }
 
-// AddPacket ingests
+// AddPacket ingests a netfilter packet and prepares it as a KnownPacket.
 func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt Packet) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
 	if applayer := p.Packet.ApplicationLayer(); applayer == nil {
 		p.SetVerdict(netfilter.NF_ACCEPT)
-		return &KnownPacket{ok: false}
+		return &KnownPacket{ok: false, mu: &sync.RWMutex{}}
 	}
 
 	// instantiate our type that implements the Packet interface
@@ -95,44 +95,46 @@ type KnownPacket struct {
 }
 
 // Data is a concurrent safe way to return the byte slice of of the underlying netfilter.Packet data.
-func (tp KnownPacket) Data() []byte {
-	tp.mu.RLock()
-	defer tp.mu.RUnlock()
-	return tp.p.Packet.Data()
+func (kp KnownPacket) Data() []byte {
+	kp.mu.RLock()
+	defer kp.mu.RUnlock()
+	return kp.p.Packet.Data()
 }
 
 // SetVerdict is a concurrent safe wrapper around netfilter.Packet.SetVerdict.
-func (tp KnownPacket) SetVerdict(verdict interface{}) {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-	tp.p.SetVerdict(verdict.(netfilter.Verdict))
+func (kp KnownPacket) SetVerdict(verdict interface{}) {
+	kp.mu.Lock()
+	defer kp.mu.Unlock()
+	kp.p.SetVerdict(verdict.(netfilter.Verdict))
 }
 
 // SetRequeueVerdict is a concurrent safe wrapper around netfilter.Packet.SetRequeueVerdict.
-func (tp KnownPacket) SetRequeueVerdict(u uint16) {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-	tp.p.SetRequeueVerdict(u)
+func (kp KnownPacket) SetRequeueVerdict(u uint16) {
+	kp.mu.Lock()
+	defer kp.mu.Unlock()
+	kp.p.SetRequeueVerdict(u)
 }
 
 // SetVerdictWithPacket is a concurrent safe wrapper around netfilter.Packet.SetVerdictWithPacket.
-func (tp KnownPacket) SetVerdictWithPacket(v interface{}, packet []byte) {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-	tp.p.SetVerdictWithPacket(v.(netfilter.Verdict), packet)
+func (kp KnownPacket) SetVerdictWithPacket(v interface{}, packet []byte) {
+	kp.mu.Lock()
+	defer kp.mu.Unlock()
+	kp.p.SetVerdictWithPacket(v.(netfilter.Verdict), packet)
 }
 
 // UUID returns the unique identifier that bitslinger uses to reference KnownPacket instances.
-func (tp KnownPacket) UUID() string {
-	return tp.uuid
+func (kp KnownPacket) UUID() string {
+	return kp.uuid
 }
 
 // AppLayer returns the application layer of the underlying Packet implementation.
-func (tp KnownPacket) AppLayer() gopacket.ApplicationLayer {
-	return tp.p.Packet.ApplicationLayer()
+func (kp KnownPacket) AppLayer() gopacket.ApplicationLayer {
+	return kp.p.Packet.ApplicationLayer()
 }
 
 // Valid returns if we consider this packet valid for us to track or not.
-func (tp KnownPacket) Valid() bool {
-	return tp.ok
+func (kp KnownPacket) Valid() bool {
+	kp.mu.RLock()
+	defer kp.mu.RUnlock()
+	return kp.ok
 }
