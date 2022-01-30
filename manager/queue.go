@@ -32,7 +32,7 @@ func (pq *PacketQueue) FromUUID(UUID string) (pckt Packet, ok bool) {
 }
 
 // AddPacket ingests
-func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt *KnownPacket) {
+func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt Packet) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
