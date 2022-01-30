@@ -41,8 +41,6 @@ var upgrader = websocket.Upgrader{} // use default options
 // var tcpClient net.Conn
 var gpq *manager.PacketTracker
 
-
-
 func init() {
 	parseUserOpts()
 	gpq = manager.NewPacketTracker()
@@ -74,6 +72,80 @@ func parseUserOpts() {
 	qnum = viper.GetInt("qnum")
 }
 
+type packetProto uint8
+
+const (
+	unknown packetProto = iota
+	tcp
+	udp
+)
+
+func reconstructPacket(packetUUID string, packet gopacket.Packet, packetPayload []byte) (buffer gopacket.SerializeBuffer, ok bool) {
+	slog := log.With().Str("caller", packetUUID).Logger()
+
+	var pp packetProto = unknown
+
+	// Set flags for TCP vs UDP
+	isTCP := packet.Layer(layers.LayerTypeTCP)
+	isUDP := packet.Layer(layers.LayerTypeUDP)
+
+	// Configure Checksums
+	switch {
+	case isTCP != nil:
+		err := packet.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(packet.NetworkLayer())
+		if err != nil {
+			slog.Warn().Err(err).Caller().Msg("Failed to set TCP network layer for checksum")
+		} else {
+			pp = tcp
+		}
+	case isUDP != nil:
+		err := packet.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(packet.NetworkLayer())
+		if err != nil {
+			slog.Warn().Err(err).Caller().Msg("Failed to set UDP network layer for checksum")
+		} else {
+			pp = udp
+		}
+	default:
+		slog.Debug().Msg("unhandled packet")
+		return
+	}
+
+	if pp == unknown {
+		slog.Debug().Msg("unhandled packet")
+		return
+	}
+
+	// Rebuild with new payload
+	buffer = gopacket.NewSerializeBuffer()
+	options := gopacket.SerializeOptions{
+		ComputeChecksums: true,
+		FixLengths:       true,
+	}
+
+	switch pp {
+	case tcp:
+		if err := gopacket.SerializeLayers(buffer, options,
+			packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+			packet.Layer(layers.LayerTypeTCP).(*layers.TCP),
+			gopacket.Payload(packetPayload),
+		); err != nil {
+			slog.Warn().Err(err).Msg("TCP serialization failure")
+			return
+		}
+	case udp:
+		if err := gopacket.SerializeLayers(buffer, options,
+			packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+			packet.Layer(layers.LayerTypeUDP).(*layers.UDP),
+			gopacket.Payload(packetPayload),
+		); err != nil {
+			slog.Warn().Err(err).Msg("TCP serialization failure")
+			return
+		}
+	}
+	ok = true
+	return
+}
+
 func releaseFromNfqueue(packetUUID string, packetPayload []byte) {
 	// Look up nfqueue pointer
 	p, ok := gpq.FromUUID(packetUUID)
@@ -91,72 +163,27 @@ func releaseFromNfqueue(packetUUID string, packetPayload []byte) {
 		// Packet did not have application layer, default accept
 		// slog.Trace().Msg("no application layer")
 		gpq.AcceptAndRelease(packetUUID)
+		return
 	}
 	if testEq(packetPayload, app.Payload()) {
 		// slog.Trace().Msg("packet not modified")
 		gpq.AcceptAndRelease(packetUUID)
+		return
 	}
-		// Set flags for TCP vs UDP
-		isTCP := packet.Layer(layers.LayerTypeTCP)
-		isUDP := packet.Layer(layers.LayerTypeUDP)
 
-	// Configure Checksums
-	switch {
-	case isTCP != nil:
-		err := packet.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(packet.NetworkLayer())
-		if err != nil {
-			slog.Warn().Err(err).Caller().Msg("Failed to set TCP network layer for checksum")
-		}
-
-	case isUDP != nil:
-		err := packet.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(packet.NetworkLayer())
-			if err != nil {
-				slog.Warn().Err(err).Caller().Msg("Failed to set UDP network layer for checksum")
-			}
-		}
-
-		// Rebuild with new payload
-		buffer := gopacket.NewSerializeBuffer()
-		options := gopacket.SerializeOptions{
-			ComputeChecksums: true,
-			FixLengths:       true,
-		}
-
-		switch {
-		case isTCP != nil:
-			if err := gopacket.SerializeLayers(buffer, options,
-				packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-				packet.Layer(layers.LayerTypeTCP).(*layers.TCP),
-				gopacket.Payload(packetPayload),
-			); err != nil {
-				slog.Warn().Err(err).Msg("TCP serialization failure")
-				return
-			}
-		case isUDP != nil:
-			if err := gopacket.SerializeLayers(buffer, options,
-				packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-				packet.Layer(layers.LayerTypeUDP).(*layers.UDP),
-				gopacket.Payload(packetPayload),
-			); err != nil {
-				slog.Warn().Err(err).Msg("TCP serialization failure")
-				return
-			}
-		}
-
+	buffer, ok := reconstructPacket(packetUUID, packet, packetPayload)
+	if ok {
 		packetBytes := buffer.Bytes()
 		p.SetVerdictWithPacket(netfilter.NF_ACCEPT, packetBytes)
-		gpq.Release(packetUUID)
-	} else {
-
 	}
 
-	return nil
+	gpq.Release(packetUUID)
 }
 
 func receivePayloadHTTP(w http.ResponseWriter, req *http.Request) {
 	// Retrieve Packet UUID from request
-	packetUuid := req.Header.Get("Packet-Uuid")
-	slog := log.With().Str("caller", packetUuid).Logger()
+	packetUUID := req.Header.Get("Packet-Uuid")
+	slog := log.With().Str("caller", packetUUID).Logger()
 	// Retrieve hex from request body and cast as bytes
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
@@ -167,7 +194,7 @@ func receivePayloadHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		slog.Warn().Err(err).Caller().Msg("failed to decode HTTP request body")
 	}
-	releaseFromNfqueue(packetUuid, packetPayload)
+	releaseFromNfqueue(packetUUID, packetPayload)
 	w.WriteHeader(200)
 }
 
@@ -294,7 +321,7 @@ func main() {
 
 		log.Printf("Starting WS listener on: %s\n", "ws://"+server+"/bitslinger")
 		go func() {
-			http.ListenAndServe(server, nil)
+			log.Fatal().Err(http.ListenAndServe(server, nil)).Msg("Websocket listn failure")
 		}()
 
 	} else {
@@ -303,7 +330,7 @@ func main() {
 
 		log.Printf("Starting HTTP listener on: %s\n", "http://"+server+"/bitslinger")
 		go func() {
-			http.ListenAndServe(server, nil)
+			log.Fatal().Err(http.ListenAndServe(server, nil)).Msg("HTTP listen failure")
 		}()
 
 		// HTTP Sender
