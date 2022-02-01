@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Routing packets to nfqueue...";
-sudo iptables -t raw -A PREROUTING -p tcp --tcp-flags PSH,ACK PSH,ACK --source-port 9999 -j NFQUEUE --queue-num 0
+sudo iptables -t raw -A PREROUTING -p tcp --tcp-flags PSH,ACK PSH,ACK --source-port 8080 -j NFQUEUE --queue-num 0
 
 while true
 do
