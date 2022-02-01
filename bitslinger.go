@@ -281,12 +281,14 @@ func receivePayloadWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func closeResponse(resp *http.Response) {
-	slog := log.With().Str("caller", resp.Request.Header.Get("Packet-Uuid")).Logger()
-	err := resp.Body.Close()
-	if err != nil {
-		slog.Debug().Err(err).Caller().Msg("failed close response body...")
+	if resp != nil {
+		slog := log.With().Str("caller", resp.Request.Header.Get("Packet-Uuid")).Logger()
+		err := resp.Body.Close()
+		if err != nil {
+			slog.Debug().Err(err).Caller().Msg("failed close response body...")
+		}
+		slog.Trace().Interface("status", resp.StatusCode).Msg("httpModeHandler done")
 	}
-	slog.Trace().Interface("status", resp.StatusCode).Msg("httpModeHandler done")
 }
 
 func httpModeHandler(pckt manager.Packet) {
@@ -301,7 +303,7 @@ func httpModeHandler(pckt manager.Packet) {
 		return
 	}
 	req.Header.Add("Packet-Uuid", pckt.UUID())
-	slog.Trace().Interface("body", hexEncodedPayload).Msg("Sending HTTP Request")
+	slog.Trace().Interface("body", string(hexEncodedPayload)).Msg("Sending HTTP Request")
 	resp, err := httpClient.Do(req)
 	defer closeResponse(resp)
 
