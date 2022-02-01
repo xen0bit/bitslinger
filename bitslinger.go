@@ -286,7 +286,7 @@ func closeResponse(resp *http.Response) {
 	if err != nil {
 		slog.Debug().Err(err).Caller().Msg("failed close response body...")
 	}
-	slog.Trace().Interface("response", resp).Msg("httpModeHandler done")
+	slog.Trace().Interface("status", resp.StatusCode).Msg("httpModeHandler done")
 }
 
 func httpModeHandler(pckt manager.Packet) {
@@ -301,7 +301,7 @@ func httpModeHandler(pckt manager.Packet) {
 		return
 	}
 	req.Header.Add("Packet-Uuid", pckt.UUID())
-	slog.Trace().Interface("request", req).Msg("Sending HTTP Request")
+	slog.Trace().Interface("body", hexEncodedPayload).Msg("Sending HTTP Request")
 	resp, err := httpClient.Do(req)
 	defer closeResponse(resp)
 
