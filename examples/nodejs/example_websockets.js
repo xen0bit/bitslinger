@@ -4,7 +4,7 @@ const ws = new WebSocket('ws://127.0.0.1:9393/bitslinger');
 
 function unpackBitSlinger(message) {
   var segments = message.split('\n');
-  if (segments.length >= 2) {
+  if (segments.length == 2) {
     var packetUuid = segments[0];
     var packetPayload = Buffer.from(segments[1], 'hex')
     return [packetUuid, packetPayload]
@@ -12,7 +12,7 @@ function unpackBitSlinger(message) {
 }
 
 function packBitSlinger(packetUuid, packetPayload) {
-  return packetUuid + '\n' + Buffer.toString('hex') + '\n'
+  return packetUuid + '\n' + Buffer.toString('hex')
 }
 
 function modifyPayload(packetPayload) {

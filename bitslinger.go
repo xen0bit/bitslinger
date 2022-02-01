@@ -37,7 +37,9 @@ var (
 	httpClient *http.Client
 )
 
-var upgrader = websocket.Upgrader{} // use default options
+var upgrader = websocket.Upgrader{
+	EnableCompression: false,
+}
 
 // var tcpClient net.Conn
 var gpq *manager.PacketQueue
@@ -235,6 +237,8 @@ func receivePayloadWS(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info().Str("caller", r.RemoteAddr).Msg("WS Client Connected")
 	// slog.SetOutput(ioutil.Discard)
+	c.EnableWriteCompression(false)
+	c.SetCompressionLevel(0)
 	wsConn = c
 
 	defer func(c *websocket.Conn) {
@@ -259,7 +263,7 @@ func receivePayloadWS(w http.ResponseWriter, r *http.Request) {
 
 		// Segment Message
 		segments := strings.Split(string(message), "\n")
-		if len(segments) < 2 {
+		if len(segments) != 2 {
 			slog.Warn().Str("message", string(message)).Msg("unexpected message format")
 			continue
 		}
@@ -311,7 +315,7 @@ func httpModeHandler(pckt manager.Packet) {
 		return
 	}
 
-	log.Warn().Msg("HTTP Proxy communication failed, Default forwarding packet as-is")
+	slog.Warn().Msg("HTTP Proxy communication failed, Default forwarding packet as-is")
 	gpq.AcceptAndRelease(pckt.UUID())
 }
 
@@ -320,7 +324,7 @@ func wsModeHandler(pckt manager.Packet) {
 
 	defer slog.Trace().Msg("wsModeHandler done")
 
-	hexEncodedPayload := []byte(pckt.UUID() + "\n" + hex.EncodeToString(pckt.AppLayer().Payload()) + "\n")
+	hexEncodedPayload := []byte(pckt.UUID() + "\n" + hex.EncodeToString(pckt.AppLayer().Payload()))
 	if wsConn != nil {
 		err := wsConn.WriteMessage(websocket.TextMessage, hexEncodedPayload)
 		if err != nil {
