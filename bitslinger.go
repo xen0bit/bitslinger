@@ -365,13 +365,6 @@ func startWebSocketListener() {
 }
 
 func startHTTPListener() {
-	// HTTP Listener
-	http.HandleFunc("/bitslinger", receivePayloadHTTP)
-
-	log.Info().Msgf("Starting HTTP listener on: %s\n", "http://"+server+"/bitslinger")
-
-	log.Fatal().Err(http.ListenAndServe(server, nil)).Msg("HTTP listen failure")
-
 	// HTTP Sender
 	proxy, err := url.Parse("http://" + proxyURI)
 	if err != nil {
@@ -382,6 +375,12 @@ func startHTTPListener() {
 		Timeout:   0,
 		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
 	}
+	// HTTP Listener
+	http.HandleFunc("/bitslinger", receivePayloadHTTP)
+
+	log.Info().Msgf("Starting HTTP listener on: %s\n", "http://"+server+"/bitslinger")
+
+	log.Fatal().Err(http.ListenAndServe(server, nil)).Msg("HTTP listen failure")
 }
 
 func main() {
