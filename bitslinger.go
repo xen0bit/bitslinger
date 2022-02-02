@@ -180,6 +180,7 @@ func releaseFromNfqueue(packetUUID string, packetPayload []byte) {
 		slog.Debug().Msg("Packet UUID Not found")
 		return
 	}
+	slog.Trace().Str("rtt", p.Latency().String()).Msg("latency")
 
 	// Decode packet from nfqueue
 	packet := gopacket.NewPacket(p.Data(), layers.LayerTypeIPv4, gopacket.Default)

@@ -3,6 +3,7 @@ package manager
 import "C"
 import (
 	"sync"
+	"time"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
@@ -48,6 +49,7 @@ func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt Packet) {
 		ok:   true,
 		mu:   &sync.RWMutex{},
 		uuid: uuid.New().String(),
+		ts:   time.Now(),
 	}
 
 	// Insert marker into PacketQueue
@@ -84,6 +86,8 @@ type Packet interface {
 	SetVerdictWithPacket(v interface{}, packet []byte)
 
 	Valid() bool
+
+	Latency() time.Duration
 }
 
 // KnownPacket implements the Packet interface and helps us keep track of netfilter packets.
@@ -92,6 +96,7 @@ type KnownPacket struct {
 	p    *netfilter.NFPacket
 	ok   bool
 	mu   *sync.RWMutex
+	ts   time.Time
 }
 
 // Data is a concurrent safe way to return the byte slice of of the underlying netfilter.Packet data.
@@ -137,4 +142,11 @@ func (kp KnownPacket) Valid() bool {
 	kp.mu.RLock()
 	defer kp.mu.RUnlock()
 	return kp.ok
+}
+
+// Latency returns the RTT time since the packet became known to us
+func (kp KnownPacket) Latency() time.Duration {
+	kp.mu.RLock()
+	defer kp.mu.RUnlock()
+	return time.Since(kp.ts)
 }
