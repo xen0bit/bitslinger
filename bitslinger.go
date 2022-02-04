@@ -31,6 +31,7 @@ var (
 	wsMode bool
 
 	qnum int
+	qmax int
 
 	proxyURL   *url.URL
 	wsConn     *websocket.Conn
@@ -56,6 +57,7 @@ func parseUserOpts() {
 	flag.String("proxy", "127.0.0.1:8080", "host:port pair for HTTP Proxy based modifications.")
 	flag.Bool("ws", false, `Configures the packet encapsulation to use websockets`)
 	flag.Int("qnum", 0, "NFQueue queue number to attach to.")
+	flag.Int("qmax", 1000, "Configures maximum number of packets allowed in queue")
 	flag.Bool("verbose", false, "Verbose logging. May slow down operation, but useful for debugging.")
 
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
@@ -77,6 +79,7 @@ func parseUserOpts() {
 	}
 
 	qnum = viper.GetInt("qnum")
+	qmax = viper.GetInt("qmax")
 }
 
 type packetProto uint8
@@ -401,7 +404,7 @@ func main() {
 		go startHTTPListener()
 	}
 
-	nfq, err := netfilter.NewNFQueue(uint16(qnum), 1000, netfilter.NF_DEFAULT_PACKET_SIZE)
+	nfq, err := netfilter.NewNFQueue(uint16(qnum), uint32(qmax), netfilter.NF_DEFAULT_PACKET_SIZE)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize NFQueue, cannot continue")
 	}
