@@ -9,7 +9,7 @@ import (
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 
-	"github.com/xen0bit/bitslinger/internal/api"
+	"github.com/xen0bit/bitslinger/internal/interactive"
 	"github.com/xen0bit/bitslinger/internal/opts"
 	"github.com/xen0bit/bitslinger/internal/plumbing"
 )
@@ -27,9 +27,9 @@ func main() {
 	// Configure Send/Recievers
 	switch opts.Mode {
 	case opts.Websockets:
-		go api.ListenAndServeWebsockets()
+		go interactive.ListenAndServeWebsockets()
 	case opts.HTTP:
-		go api.ListenAndServeHTTP()
+		go interactive.ListenAndServeHTTP()
 	}
 
 	log.Trace().

@@ -1,4 +1,4 @@
-package api
+package interactive
 
 import (
 	"encoding/hex"
@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 
+	"github.com/xen0bit/bitslinger/internal/common"
 	"github.com/xen0bit/bitslinger/internal/opts"
 	"github.com/xen0bit/bitslinger/internal/packets"
 )
@@ -17,25 +18,41 @@ var upgrader = websocket.Upgrader{
 	EnableCompression: false,
 }
 
-func HandleHTTPPayload(w http.ResponseWriter, req *http.Request) {
+func HandleInteractiveHTTP(w http.ResponseWriter, req *http.Request) {
 	// Retrieve Packet UUID from request
 	packetUUID := req.Header.Get("Packet-Uuid")
 	slog := log.With().Str("caller", packetUUID).Logger()
-	// Retrieve hex from request body and cast as bytes
+
+	// If we don't know of the UUID, quickly discard the request.
+	// We also instantiate our KnownPacket type, which is useful.
+	known, ok := packets.Queue.FromUUID(packetUUID)
+	if !ok {
+		slog.Warn().Err(common.ErrUnknownPacket).Msg("invalid request")
+		w.WriteHeader(400)
+		return
+	}
+
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		slog.Warn().Err(err).Caller().Msg("failed to receive payload over HTTP")
+		w.WriteHeader(400)
 		return
 	}
-	packetPayload, err := hex.DecodeString(string(body))
+
+	// Retrieve modified packet data in hex form from our HTTP client
+	newPayload, err := hex.DecodeString(string(body))
 	if err != nil {
 		slog.Warn().Err(err).Caller().Msg("failed to decode HTTP request body")
+		w.WriteHeader(400)
 	}
-	packets.ReleaseModifiedPacket(packetUUID, packetPayload)
+
+	// Presuming we were able to decode it, we release the modified packet with its new payload from our queue.
+	known.SetPayload(newPayload)
+	known.Release()
 	w.WriteHeader(200)
 }
 
-func HandleIncomingWS(w http.ResponseWriter, r *http.Request) {
+func HandleInteractiveWS(w http.ResponseWriter, r *http.Request) {
 	slog := log.With().Str("caller", r.RemoteAddr).Logger()
 
 	slog.Trace().Msg("websocket payload received...")
@@ -76,23 +93,31 @@ func HandleIncomingWS(w http.ResponseWriter, r *http.Request) {
 
 		slog.Trace().Strs("segments", segments).Msg("websocket message")
 
-		packetUUID := segments[0]
-		payloadHex := segments[1]
-		packetPayload, err := hex.DecodeString(payloadHex)
+		// Again we see if this is a valid UUID and substantiate our KnownPacket type.
+		known, ok := packets.Queue.FromUUID(segments[0])
 
-		if err != nil {
-			slog.Error().Err(err).Interface("payload", payloadHex).Msg("Packet decode failure!")
+		if !ok {
+			slog.Error().Err(common.ErrUnknownPacket).Interface("received", segments[0]).Msg("invalid request")
 			continue
 		}
 
-		packets.ReleaseModifiedPacket(packetUUID, packetPayload)
+		payloadHex := segments[1]
+		newPayload, err := hex.DecodeString(payloadHex)
+
+		if err != nil {
+			slog.Error().Err(err).Interface("received", payloadHex).Msg("Packet decode failure!")
+			continue
+		}
+
+		known.SetPayload(newPayload)
+		known.Release()
 
 	}
 }
 
 func ListenAndServeWebsockets() {
 	// WebSocket Listener
-	http.HandleFunc("/bitslinger", HandleIncomingWS)
+	http.HandleFunc("/bitslinger", HandleInteractiveWS)
 	log.Info().Msgf("Starting WS listener on: %s\n", "ws://"+opts.BindAddr+"/bitslinger")
 	log.Fatal().Err(http.ListenAndServe(opts.ProxyDestination, nil)).Msg("Websocket listen failure")
 }
@@ -101,7 +126,7 @@ func ListenAndServeHTTP() {
 	// HTTP Sender
 
 	// HTTP Listener
-	http.HandleFunc("/bitslinger", HandleHTTPPayload)
+	http.HandleFunc("/bitslinger", HandleInteractiveHTTP)
 
 	// TODO: Fix the wording/semantics here, it's a little confusing that we're listening on the InterActiveAPI
 	log.Info().Msgf("Starting HTTP listener on: %s\n", "http://"+opts.BindAddr+"/bitslinger")

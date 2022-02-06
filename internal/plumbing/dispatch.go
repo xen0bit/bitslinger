@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 
+	"github.com/xen0bit/bitslinger/internal/common"
 	"github.com/xen0bit/bitslinger/internal/opts"
 	"github.com/xen0bit/bitslinger/internal/packets"
 )
@@ -26,9 +27,9 @@ func SendToProxy(p *netfilter.NFPacket) int {
 	// gpq.Lock()
 	// defer gpq.Unlock()
 	// Decode a packet
-	// packet := gopacket.NewPacket(payload.Data, layers.LayerTypeIPv4, gopacket.Default)
+	// packet := gopacket.NewPacket(payload.Payload, layers.LayerTypeIPv4, gopacket.Default)
 
-	pckt := packets.Queue.AddPacket(p)
+	pckt := packets.Queue.NewPacket(p)
 	if !pckt.Valid() {
 		return 0
 	}
@@ -50,7 +51,7 @@ func SendToProxy(p *netfilter.NFPacket) int {
 	return 0
 }
 
-func SendPacketToHTTP(pckt packets.Packet) {
+func SendPacketToHTTP(pckt common.Packet) {
 	slog := log.With().Str("caller", pckt.UUID()).Logger()
 
 	// HTTP Mode
@@ -75,7 +76,7 @@ func SendPacketToHTTP(pckt packets.Packet) {
 	packets.Queue.AcceptAndRelease(pckt.UUID())
 }
 
-func SendPacketToWS(pckt packets.Packet) {
+func SendPacketToWS(pckt common.Packet) {
 	slog := log.With().Str("caller", pckt.UUID()).Logger()
 
 	defer slog.Trace().Msg("SendPacketToWS done")

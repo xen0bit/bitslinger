@@ -1,4 +1,6 @@
+//go:build ignore
 // +build ignore
+
 package main
 
 import (
@@ -54,31 +56,31 @@ func main() {
 	}
 	log.Println("Connected!")
 	defer conn.Close()
-	//go receiveHandler(conn)
+	// go receiveHandler(conn)
 
 	// Our main loop for the client
 	// We send our relevant packets here
 	for {
 		select {
 		default:
-			//Read Message
+			// Read Message
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				log.Println("Error in receive:", err)
 				return
 			}
-			//Unpack Segments
+			// Unpack Segments
 			packetUuid, packetPayload, err := unpackBitSlinger(message)
 			if err != nil {
 				break
 			}
-			//Modify Payload
+			// Modify Payload
 			newPacketPayload := modifyPayload(packetPayload)
 
-			//Repack Segments
+			// Repack Segments
 			newMessage := packBitSlinger(packetUuid, newPacketPayload)
 
-			//Send Message
+			// Send Message
 			conn.WriteMessage(websocket.TextMessage, newMessage)
 
 		case <-interrupt:

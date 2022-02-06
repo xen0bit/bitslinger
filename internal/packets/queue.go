@@ -3,15 +3,16 @@ package packets
 import "C"
 import (
 	"sync"
-	"time"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/uuid"
+
+	"github.com/xen0bit/bitslinger/internal/common"
 )
 
 // PacketQueue keeps track of relevant packets via libnetfilter_queue.
 type PacketQueue struct {
-	packets map[string]Packet
+	packets map[string]common.Packet
 	mu      *sync.RWMutex
 }
 
@@ -19,20 +20,20 @@ type PacketQueue struct {
 func NewPacketQueue() *PacketQueue {
 	return &PacketQueue{
 		mu:      &sync.RWMutex{},
-		packets: make(map[string]Packet),
+		packets: make(map[string]common.Packet),
 	}
 }
 
 // FromUUID safely attempts to retrieve a packet by referencing a UUID that we previously generated.
-func (pq *PacketQueue) FromUUID(UUID string) (pckt Packet, ok bool) {
+func (pq *PacketQueue) FromUUID(UUID string) (pckt common.Packet, ok bool) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 	pckt, ok = pq.packets[UUID]
 	return
 }
 
-// AddPacket ingests a netfilter packet and prepares it as a KnownPacket.
-func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt Packet) {
+// NewPacket ingests a netfilter packet and prepares it as a KnownPacket.
+func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (pckt common.Packet) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
@@ -44,11 +45,12 @@ func (pq *PacketQueue) AddPacket(p *netfilter.NFPacket) (pckt Packet) {
 	// instantiate our type that implements the Packet interface
 	// generate UUID to Identify packet during this
 	pckt = &KnownPacket{
-		p:    p,
-		ok:   true,
-		mu:   &sync.RWMutex{},
-		uuid: uuid.New().String(),
-		ts:   time.Now(),
+		nfp:     p,
+		ok:      true,
+		mu:      &sync.RWMutex{},
+		uuid:    uuid.New().String(),
+		payload: p.Packet.Data(),
+		manager: pq,
 	}
 
 	// Insert marker into PacketQueue

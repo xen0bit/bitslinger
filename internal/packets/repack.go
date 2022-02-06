@@ -14,12 +14,12 @@ const (
 	udp
 )
 
-func reconstructPacket(packetUUID string, packet gopacket.Packet, packetPayload []byte) (buffer gopacket.SerializeBuffer, ok bool) {
-	slog := log.With().Str("caller", packetUUID).Logger()
+func (kp *KnownPacket) Reconstruct(packet gopacket.Packet, packetPayload []byte) (buffer gopacket.SerializeBuffer, ok bool) {
+	slog := log.With().Str("caller", kp.UUID()).Logger()
 
 	defer slog.Trace().Msg("done reconstructing, released!")
 
-	var pp packetProto = unknown
+	var pp = unknown
 
 	slog.Trace().Msg("reconstructing packet....")
 
