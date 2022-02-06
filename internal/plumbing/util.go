@@ -1,5 +1,4 @@
-package main
-
+package plumbing
 
 func testEq(a, b []byte) bool {
 	if len(a) != len(b) {

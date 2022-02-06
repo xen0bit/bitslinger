@@ -1,4 +1,4 @@
-package manager
+package queue
 
 import "C"
 import (
@@ -16,7 +16,7 @@ type PacketQueue struct {
 	mu      *sync.RWMutex
 }
 
-// NewPacketQueue instantiates our package tracker/manager.
+// NewPacketQueue instantiates our package tracker/queue.
 func NewPacketQueue() *PacketQueue {
 	return &PacketQueue{
 		mu:      &sync.RWMutex{},
