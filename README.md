@@ -73,9 +73,9 @@ An HTTP `POST` request is sent through the proxy and back to the bitslinger HTTP
 In this mode bitslinger will automatically stand up a WebSocket server in this mode and attempt to send and receive messages containing the packets in the following format to any connected 
 WebSocket client.
 
-EX: `96f7ba66-d3f2-4b06-b6a0-e5975525d98f\n68656c6c6f0a\n`
+EX: `96f7ba66-d3f2-4b06-b6a0-e5975525d98f\n68656c6c6f0a`
 
-Where the UUID and hex encoded payloads segments are terminated with a Line-Feed `\n`.
+Where the UUID and hex encoded payloads segments are separated with a Line-Feed `\n`.
 
 ### No Proxy
 

@@ -4,13 +4,13 @@ import time
 
 def unpackBitSlinger(message):
     segments = message.split("\n")
-    if len(segments) >= 2:
+    if len(segments) == 2:
         packetUuid = segments[0]
         packetPayload = bytes.fromhex(segments[1])
         return packetUuid, packetPayload
 
 def packBitSlinger(packetUuid, packetPayload):
-    return packetUuid + "\n" + packetPayload.hex() + "\n"
+    return packetUuid + "\n" + packetPayload.hex()
 
 def modifyPayload(packetPayload):
     return packetPayload.replace(b'world', b'remy!')

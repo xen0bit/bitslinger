@@ -20,7 +20,7 @@ var interrupt chan os.Signal
 
 func unpackBitSlinger(message []byte) (packetUuid string, packetPayload []byte, err error) {
 	segments := strings.Split(string(message), "\n")
-	if len(segments) >= 2 {
+	if len(segments) == 2 {
 		packetUuid := segments[0]
 		packetPayload, err := hex.DecodeString(segments[1])
 		if err != nil {
@@ -34,7 +34,7 @@ func unpackBitSlinger(message []byte) (packetUuid string, packetPayload []byte, 
 }
 
 func packBitSlinger(packetUuid string, packetPayload []byte) (message []byte) {
-	return []byte(packetUuid + "\n" + hex.EncodeToString(packetPayload) + "\n")
+	return []byte(packetUuid + "\n" + hex.EncodeToString(packetPayload))
 }
 
 func modifyPayload(payload []byte) []byte {
