@@ -6,7 +6,10 @@ import (
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/xen0bit/bitslinger/internal/common"
 )
 
 // KnownPacket implements the Packet interface and helps us keep track of netfilter packets.
@@ -15,6 +18,9 @@ type KnownPacket struct {
 	nfp     *netfilter.NFPacket
 	gop     gopacket.Packet
 	payload []byte
+
+	v4, v6, tcp, udp bool
+	trace            *zerolog.Logger
 
 	ok      bool
 	mu      *sync.RWMutex
@@ -103,4 +109,67 @@ func (kp KnownPacket) Latency() time.Duration {
 	kp.mu.RLock()
 	defer kp.mu.RUnlock()
 	return time.Since(kp.Timestamp())
+}
+
+func (kp KnownPacket) TraceLog() *zerolog.Logger {
+	kp.mu.RLock()
+	defer kp.mu.RUnlock()
+	return kp.trace
+}
+
+func (kp KnownPacket) SetVersion(known uint8) {
+	kp.mu.Lock()
+	defer kp.mu.Unlock()
+	switch common.PacketStack(known) {
+	case common.IPv4, common.TCP4, common.UDP4:
+		kp.v4 = true
+		kp.v6 = false
+	case common.IPv6, common.TCP6, common.UDP6:
+		kp.v4 = false
+		kp.v6 = true
+	default:
+		kp.v4 = false
+		kp.v6 = false
+		kp.tcp = false
+		kp.udp = false
+		return
+	}
+
+	switch common.PacketStack(known) {
+	case common.TCP4, common.TCP6:
+		kp.tcp = true
+		kp.udp = false
+	case common.UDP4, common.UDP6:
+		kp.tcp = false
+		kp.udp = true
+	default:
+		kp.tcp = false
+		kp.udp = false
+		return
+	}
+}
+
+func (kp KnownPacket) GetVersion() uint8 {
+	kp.mu.RLock()
+	defer kp.mu.RUnlock()
+	switch {
+	case kp.v4:
+		if kp.tcp {
+			return uint8(common.TCP4)
+		}
+		if kp.udp {
+			return uint8(common.UDP4)
+		}
+		return uint8(common.IPv4)
+	case kp.v6:
+		if kp.tcp {
+			return uint8(common.TCP6)
+		}
+		if kp.udp {
+			return uint8(common.UDP6)
+		}
+		return uint8(common.IPv6)
+	default:
+		return uint8(common.Unknown)
+	}
 }

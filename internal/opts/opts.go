@@ -12,10 +12,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type APIMode uint8
+type ListenMode uint8
 
 const (
-	HTTP APIMode = iota
+	HTTP ListenMode = iota
 	Websockets
 )
 
@@ -28,7 +28,7 @@ var (
 	BindAddr string
 
 	// Mode is an opcode representing which type of API listener(s) we are using
-	Mode APIMode = HTTP
+	Mode ListenMode = HTTP
 
 	// QueueNum represents our specific nfqueue ID used to receive and release packets.
 	// Be aware that Suricata and potentially other IPS systems may also use the default of 0.

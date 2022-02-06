@@ -18,6 +18,7 @@ var upgrader = websocket.Upgrader{
 	EnableCompression: false,
 }
 
+// HandleInteractiveHTTP handles HTTP requests that are meant to target a specific packet UUID and provide a modified payload.
 func HandleInteractiveHTTP(w http.ResponseWriter, req *http.Request) {
 	// Retrieve Packet UUID from request
 	packetUUID := req.Header.Get("Packet-Uuid")
@@ -52,6 +53,7 @@ func HandleInteractiveHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(200)
 }
 
+// HandleInteractiveWS handles websocket connections that will receive packets from our queue and determine any modifications.
 func HandleInteractiveWS(w http.ResponseWriter, r *http.Request) {
 	slog := log.With().Str("caller", r.RemoteAddr).Logger()
 
@@ -115,6 +117,7 @@ func HandleInteractiveWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListenAndServeWebsockets starts our websocket listener for packet modification requests.
 func ListenAndServeWebsockets() {
 	// WebSocket Listener
 	http.HandleFunc("/bitslinger", HandleInteractiveWS)
@@ -122,6 +125,7 @@ func ListenAndServeWebsockets() {
 	log.Fatal().Err(http.ListenAndServe(opts.ProxyDestination, nil)).Msg("Websocket listen failure")
 }
 
+// ListenAndServeHTTP starts our HTTP listener for packet modification requests.
 func ListenAndServeHTTP() {
 	// HTTP Sender
 

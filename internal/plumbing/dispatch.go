@@ -22,7 +22,7 @@ var (
 	}
 )
 
-// SendToProxy handles an incoming packet and then send its to the appropriate proxy listener as defined by opts.
+// SendToProxy handles an incoming packet to be sent to the appropriate proxy listener as defined by opts.
 func SendToProxy(p *netfilter.NFPacket) int {
 	// gpq.Lock()
 	// defer gpq.Unlock()
@@ -51,6 +51,7 @@ func SendToProxy(p *netfilter.NFPacket) int {
 	return 0
 }
 
+// SendPacketToHTTP handles an incoming packet destined for further handling by clients of the interactive HTTP server.
 func SendPacketToHTTP(pckt common.Packet) {
 	slog := log.With().Str("caller", pckt.UUID()).Logger()
 
@@ -76,6 +77,7 @@ func SendPacketToHTTP(pckt common.Packet) {
 	packets.Queue.AcceptAndRelease(pckt.UUID())
 }
 
+// SendPacketToWS  handles an incoming packet destined for further handling by clients of the interactive websocket server.
 func SendPacketToWS(pckt common.Packet) {
 	slog := log.With().Str("caller", pckt.UUID()).Logger()
 

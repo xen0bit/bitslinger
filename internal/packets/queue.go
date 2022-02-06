@@ -5,10 +5,20 @@ import (
 	"sync"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
-	"github.com/google/uuid"
+	"github.com/google/gopacket/layers"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/xen0bit/bitslinger/internal/common"
 )
+
+var Queue *PacketQueue
+
+var rejected = &KnownPacket{ok: false}
+
+func init() {
+	Queue = NewPacketQueue()
+}
 
 // PacketQueue keeps track of relevant packets via libnetfilter_queue.
 type PacketQueue struct {
@@ -33,28 +43,77 @@ func (pq *PacketQueue) FromUUID(UUID string) (pckt common.Packet, ok bool) {
 }
 
 // NewPacket ingests a netfilter packet and prepares it as a KnownPacket.
-func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (pckt common.Packet) {
+func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (kp common.Packet) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
+
+	// netfilter package has already read the packet for us using lazy and nocopy, we should know the layers now.
+
+	discard := func(p *netfilter.NFPacket, missing string) *KnownPacket {
+		log.Trace().Msgf("missing %s layer, discard", missing)
+		p.SetVerdict(netfilter.NF_ACCEPT)
+		return rejected
+	}
+
+	ethl := p.Packet.LinkLayer()
+	netl := p.Packet.NetworkLayer()
+	ip4, ok4 := netl.(*layers.IPv4)
+	ip6, ok6 := netl.(*layers.IPv6)
+
+	switch {
+	case ethl == nil:
+		return discard(p, "ethernet")
+	case netl == nil:
+		return discard(p, "network")
+	case !ok4 && !ok6:
+		return discard(p, "IP")
+	}
+
+	trace := log.With().
+		MACAddr("src", ethl.LinkFlow().Src().Raw()).
+		MACAddr("dst", ethl.LinkFlow().Dst().Raw()).Logger()
+
+	// instantiate our type that implements the Packet interface
+	// generate UUID to Identify packet during this
+	kp = &KnownPacket{
+		gop:     p.Packet,
+		mu:      &sync.RWMutex{},
+		manager: pq,
+		trace:   &trace,
+	}
+
+	kp.(*KnownPacket).TraceLog().Trace().Msg("link layer found")
+
+	switch {
+	case ok4:
+		kp.SetVersion(uint8(common.IPv4))
+		trace2 := trace.With().Str("flow", ip4.NetworkFlow().String()).Logger()
+		kp.(*KnownPacket).trace = &trace2
+		trace = zerolog.Logger{}
+	case ok6:
+		kp.SetVersion(uint8(common.IPv6))
+		trace2 := trace.With().Str("flow", ip6.NetworkFlow().String()).Logger()
+		kp.(*KnownPacket).trace = &trace2
+		trace = zerolog.Logger{}
+	default:
+		return discard(p, "IP")
+	}
+
+	kp.(*KnownPacket).TraceLog().Trace().Msg("link layer found")
 
 	if applayer := p.Packet.ApplicationLayer(); applayer == nil {
 		p.SetVerdict(netfilter.NF_ACCEPT)
 		return &KnownPacket{ok: false, mu: &sync.RWMutex{}}
 	}
 
-	// instantiate our type that implements the Packet interface
-	// generate UUID to Identify packet during this
-	pckt = &KnownPacket{
+	/*
 		nfp:     p,
 		ok:      true,
-		mu:      &sync.RWMutex{},
 		uuid:    uuid.New().String(),
-		payload: p.Packet.Data(),
-		manager: pq,
-	}
+		payload: p.Packet.Data(),*/
 
 	// Insert marker into PacketQueue
-	pq.packets[pckt.UUID()] = pckt
+	pq.packets[kp.UUID()] = kp
 
 	return
 }
@@ -72,4 +131,16 @@ func (pq *PacketQueue) Release(packetUUID string) {
 	defer pq.mu.Unlock()
 	// Remove UUID from map
 	delete(pq.packets, packetUUID)
+}
+
+func testEq(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
