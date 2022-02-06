@@ -1,4 +1,4 @@
-package plumbing
+package packets
 
 import (
 	"github.com/google/gopacket"

@@ -1,25 +1,23 @@
-package plumbing
+package packets
 
 import (
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/rs/zerolog/log"
-
-	"github.com/xen0bit/bitslinger/internal/queue"
 )
 
-var gpq *queue.PacketQueue
+var Queue *PacketQueue
 
 func init() {
-	gpq = queue.NewPacketQueue()
+	Queue = NewPacketQueue()
 }
 
-func ReleasePacket(packetUUID string, packetPayload []byte) {
+func ReleaseModifiedPacket(packetUUID string, packetPayload []byte) {
 	slog := log.With().Str("caller", packetUUID).Logger()
 
 	// Look up nfqueue pointer
-	p, ok := gpq.FromUUID(packetUUID)
+	p, ok := Queue.FromUUID(packetUUID)
 
 	if !ok {
 		slog.Debug().Msg("Packet UUID Not found")
@@ -35,12 +33,12 @@ func ReleasePacket(packetUUID string, packetPayload []byte) {
 	if app == nil {
 		// Packet did not have application layer, default accept
 		slog.Trace().Msg("no application layer, releasing...")
-		gpq.AcceptAndRelease(packetUUID)
+		Queue.AcceptAndRelease(packetUUID)
 		return
 	}
 	if testEq(packetPayload, app.Payload()) {
 		slog.Trace().Msg("packet not modified, releasing...")
-		gpq.AcceptAndRelease(packetUUID)
+		Queue.AcceptAndRelease(packetUUID)
 		return
 	}
 
@@ -50,5 +48,5 @@ func ReleasePacket(packetUUID string, packetPayload []byte) {
 		p.SetVerdictWithPacket(netfilter.NF_ACCEPT, packetBytes)
 	}
 
-	gpq.Release(packetUUID)
+	Queue.Release(packetUUID)
 }
