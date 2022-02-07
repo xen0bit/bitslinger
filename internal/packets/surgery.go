@@ -32,31 +32,6 @@ func (kp *KnownPacket) Reconstruct(newPayload []byte) (buffer gopacket.Serialize
 	// Set flags for TCP vs UDP
 	isTCP := kp.gop.Layer(layers.LayerTypeTCP) != nil
 	isUDP := kp.gop.Layer(layers.LayerTypeUDP) != nil
-	/*	isARP := kp.gop.Layer(layers.LayerTypeARP) != nil
-		isDHCP4 := kp.gop.Layer(layers.LayerTypeDHCPv4) != nil
-	*/
-	// Configure Checksums
-	switch {
-	case isTCP:
-		err := kp.gop.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(kp.gop.NetworkLayer())
-		if err == nil {
-			slog.Trace().Msg("packet is TCP...")
-			break
-		}
-		slog.Warn().Err(err).Caller().Msg("Failed to set TCP network layer for checksum")
-		break
-	case isUDP:
-		err := kp.gop.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(kp.gop.NetworkLayer())
-		if err == nil {
-			slog.Trace().Msg("packet is UDP...")
-			break
-		}
-		slog.Warn().Err(err).Caller().Msg("Failed to set UDP network layer for checksum")
-		break
-	default:
-		slog.Trace().Caller().Msg("unhandled packet")
-		return
-	}
 
 	slog.Trace().Msg("Setting packet options...")
 
@@ -68,32 +43,56 @@ func (kp *KnownPacket) Reconstruct(newPayload []byte) (buffer gopacket.Serialize
 	}
 
 	slog.Trace().Msg("Reserializing packet...")
-
-	switch pp {
-	case tcp:
-		err := gopacket.SerializeLayers(buffer, options,
-			kp.gop.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-			kp.gop.Layer(layers.LayerTypeTCP).(*layers.TCP),
-			gopacket.Payload(newPayload),
-		)
-		if err != nil {
-			slog.Warn().Err(err).Msg("TCP serialization failure")
-			return
+	/*	isARP := kp.gop.Layer(layers.LayerTypeARP) != nil
+		isDHCP4 := kp.gop.Layer(layers.LayerTypeDHCPv4) != nil
+	*/
+	// Configure Checksums
+	switch {
+	case isTCP:
+		err := kp.gop.TransportLayer().(*layers.TCP).SetNetworkLayerForChecksum(kp.gop.NetworkLayer())
+		if err == nil {
+			slog.Trace().Msg("packet is TCP...")
+			err := gopacket.SerializeLayers(buffer, options,
+				kp.gop.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+				kp.gop.Layer(layers.LayerTypeTCP).(*layers.TCP),
+				gopacket.Payload(newPayload),
+			)
+			if err != nil {
+				slog.Warn().Err(err).Msg("TCP serialization failure")
+				ok = false
+				return
+			} else {
+				slog.Trace().Msg("TCP serialization success")
+				ok = true
+				return
+			}
 		}
-	case udp:
-		if err := gopacket.SerializeLayers(buffer, options,
-			kp.gop.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
-			kp.gop.Layer(layers.LayerTypeUDP).(*layers.UDP),
-			gopacket.Payload(newPayload),
-		); err != nil {
-			slog.Warn().Err(err).Msg("UDP serialization failure")
-			return
+		slog.Warn().Err(err).Caller().Msg("Failed to set TCP network layer for checksum")
+	case isUDP:
+		err := kp.gop.TransportLayer().(*layers.UDP).SetNetworkLayerForChecksum(kp.gop.NetworkLayer())
+		if err == nil {
+			slog.Trace().Msg("packet is UDP...")
+			err := gopacket.SerializeLayers(buffer, options,
+				kp.gop.Layer(layers.LayerTypeIPv4).(*layers.IPv4),
+				kp.gop.Layer(layers.LayerTypeUDP).(*layers.UDP),
+				gopacket.Payload(newPayload),
+			)
+			if err != nil {
+				slog.Warn().Err(err).Msg("UDP serialization failure")
+				ok = false
+				return
+			} else {
+				slog.Trace().Msg("UDP serialization success")
+				ok = true
+				return
+			}
 		}
+		slog.Warn().Err(err).Caller().Msg("Failed to set UDP network layer for checksum")
 	default:
-		slog.Debug().Msg("unhandled packet")
+		slog.Trace().Caller().Msg("unhandled packet")
+		ok = false
 		return
 	}
 
-	ok = true
 	return
 }
