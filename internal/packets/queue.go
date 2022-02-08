@@ -6,6 +6,7 @@ import (
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket/layers"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -55,23 +56,26 @@ func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (kp common.Packet) {
 		return rejected
 	}
 
-	ethl := p.Packet.LinkLayer()
+	//ethl := p.Packet.LinkLayer()
 	netl := p.Packet.NetworkLayer()
 	ip4, ok4 := netl.(*layers.IPv4)
 	ip6, ok6 := netl.(*layers.IPv6)
 
 	switch {
-	case ethl == nil:
-		return discard(p, "ethernet")
+	//case ethl == nil:
+	//	return discard(p, "ethernet")
 	case netl == nil:
 		return discard(p, "network")
 	case !ok4 && !ok6:
 		return discard(p, "IP")
 	}
 
-	trace := log.With().
-		MACAddr("src", ethl.LinkFlow().Src().Raw()).
-		MACAddr("dst", ethl.LinkFlow().Dst().Raw()).Logger()
+	// trace := log.With().
+	// 	MACAddr("src", ethl.LinkFlow().Src().Raw()).
+	// 	MACAddr("dst", ethl.LinkFlow().Dst().Raw()).Logger()
+
+	//total shim, ignore
+	trace := log.With().Str("NewPacket", "trace").Logger()
 
 	// instantiate our type that implements the Packet interface
 	// generate UUID to Identify packet during this
@@ -80,6 +84,8 @@ func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (kp common.Packet) {
 		mu:      &sync.RWMutex{},
 		manager: pq,
 		trace:   &trace,
+		uuid:    uuid.New().String(),
+		ok:      true,
 	}
 
 	kp.(*KnownPacket).TraceLog().Trace().Msg("link layer found")

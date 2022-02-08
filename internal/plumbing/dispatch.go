@@ -58,7 +58,7 @@ func SendPacketToHTTP(pckt common.Packet) {
 	// HTTP Mode
 	hexEncodedPayload := []byte(hex.EncodeToString(pckt.AppLayer().Payload()))
 	payloadReader := bytes.NewReader(hexEncodedPayload)
-	req, err := http.NewRequest("POST", "http://"+opts.ProxyDestination+"/bitslinger", payloadReader)
+	req, err := http.NewRequest("POST", "http://"+opts.BindAddr+"/bitslinger", payloadReader)
 	if err != nil {
 		slog.Error().Err(err).Msg("failed to craft http request")
 		return

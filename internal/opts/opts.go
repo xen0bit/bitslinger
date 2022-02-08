@@ -80,6 +80,6 @@ func ParseFlags() {
 
 	var urlerr error
 	if ProxyURL, urlerr = url.Parse("http://" + ProxyDestination); urlerr != nil {
-		log.Fatal().Err(err).Msg("Invalid proxy bind URI")
+		log.Fatal().Err(urlerr).Msg("Invalid proxy bind URI")
 	}
 }
