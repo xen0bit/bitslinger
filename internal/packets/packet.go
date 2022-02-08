@@ -89,7 +89,7 @@ func (kp KnownPacket) UUID() string {
 
 // AppLayer returns the application layer of the underlying Packet implementation.
 func (kp KnownPacket) AppLayer() gopacket.ApplicationLayer {
-	return kp.nfp.Packet.ApplicationLayer()
+	return kp.gop.ApplicationLayer()
 }
 
 // Valid returns if we consider this packet valid for us to track or not.
