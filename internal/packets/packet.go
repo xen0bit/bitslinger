@@ -106,14 +106,10 @@ func (kp KnownPacket) Timestamp() time.Time {
 
 // Latency returns the RTT time since the packet became known to us
 func (kp KnownPacket) Latency() time.Duration {
-	kp.mu.RLock()
-	defer kp.mu.RUnlock()
 	return time.Since(kp.Timestamp())
 }
 
 func (kp KnownPacket) TraceLog() *zerolog.Logger {
-	kp.mu.RLock()
-	defer kp.mu.RUnlock()
 	return kp.trace
 }
 

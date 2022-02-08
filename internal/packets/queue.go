@@ -56,13 +56,13 @@ func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (kp common.Packet) {
 		return rejected
 	}
 
-	//ethl := p.Packet.LinkLayer()
+	// ethl := p.Packet.LinkLayer()
 	netl := p.Packet.NetworkLayer()
 	ip4, ok4 := netl.(*layers.IPv4)
 	ip6, ok6 := netl.(*layers.IPv6)
 
 	switch {
-	//case ethl == nil:
+	// case ethl == nil:
 	//	return discard(p, "ethernet")
 	case netl == nil:
 		return discard(p, "network")
@@ -74,7 +74,7 @@ func (pq *PacketQueue) NewPacket(p *netfilter.NFPacket) (kp common.Packet) {
 	// 	MACAddr("src", ethl.LinkFlow().Src().Raw()).
 	// 	MACAddr("dst", ethl.LinkFlow().Dst().Raw()).Logger()
 
-	//total shim, ignore
+	// total shim, ignore
 	trace := log.With().Str("NewPacket", "trace").Logger()
 
 	// instantiate our type that implements the Packet interface
